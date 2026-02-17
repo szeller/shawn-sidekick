@@ -302,3 +302,37 @@ def get_google_config() -> dict:
         "client_secret": client_secret,
         "refresh_token": refresh_token
     }
+
+
+def get_microsoft_config() -> dict:
+    """Get Microsoft configuration from .env file or environment variables.
+
+    Used for Microsoft To Do (Graph API).
+
+    Returns:
+        dict with keys: client_id, refresh_token, and optionally client_secret
+
+    Raises:
+        ValueError: If required environment variables are missing
+    """
+    env_file_vars = _load_env_file()
+
+    client_id = _get_env("MICROSOFT_CLIENT_ID", env_file_vars)
+    client_secret = _get_env("MICROSOFT_CLIENT_SECRET", env_file_vars)
+    refresh_token = _get_env("MICROSOFT_REFRESH_TOKEN", env_file_vars)
+
+    if not all([client_id, refresh_token]):
+        raise ValueError(
+            "Missing required Microsoft configuration. "
+            "Set MICROSOFT_CLIENT_ID and MICROSOFT_REFRESH_TOKEN "
+            "in .env file or environment variables. "
+            "Run: python3 tools/get_microsoft_refresh_token.py for setup instructions."
+        )
+
+    config = {
+        "client_id": client_id,
+        "refresh_token": refresh_token
+    }
+    if client_secret:
+        config["client_secret"] = client_secret
+    return config

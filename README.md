@@ -287,6 +287,7 @@ Current skills (each is a single-file client + markdown docs):
 - **Zoom** - Access meeting transcripts and recordings (via Dash MCP)
 - **Chrome** - Query browsing history, search visited pages, filter by service (Confluence, JIRA, Paper, etc.)
 - **Dropbox** - Read/write files and Paper docs
+- **Microsoft To Do** - Task management via Microsoft Graph API
 - **OmniFocus** - Task management (macOS only)
 - **Gmail** - Search messages, create drafts
 - **Google Calendar** - Manage events
@@ -401,6 +402,7 @@ See individual skill documentation for detailed command usage:
 - [JIRA](.claude/skills/jira/README.md) - Query issues, traverse hierarchies, manage labels
 - [Confluence](.claude/skills/confluence/README.md) - Search pages, read/write content, manage 1:1 docs
 - [Chrome](.claude/skills/chrome/README.md) - Query browsing history, search visited pages, filter by service
+- [Microsoft To Do](.claude/skills/mstodo/README.md) - Task management via Microsoft Graph API
 - [OmniFocus](.claude/skills/omnifocus/README.md) - Task management (macOS only)
 - [Dropbox](.claude/skills/dropbox/README.md) - Read/write files and Paper docs
 - [Gmail](.claude/skills/gmail/README.md) - Search messages, create drafts
