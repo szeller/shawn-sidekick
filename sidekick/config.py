@@ -336,3 +336,26 @@ def get_microsoft_config() -> dict:
     if client_secret:
         config["client_secret"] = client_secret
     return config
+
+
+def get_pagerduty_config() -> dict:
+    """Get PagerDuty configuration from .env file or environment variables.
+
+    Returns:
+        dict with keys: api_token
+
+    Raises:
+        ValueError: If required environment variables are missing
+    """
+    env_file_vars = _load_env_file()
+
+    api_token = _get_env("PAGERDUTY_API_TOKEN", env_file_vars)
+
+    if not api_token:
+        raise ValueError(
+            "Missing required PagerDuty configuration. "
+            "Set PAGERDUTY_API_TOKEN in .env file or environment variables. "
+            "Generate a token at: Settings > API Access Keys > Create New API Key"
+        )
+
+    return {"api_token": api_token}
