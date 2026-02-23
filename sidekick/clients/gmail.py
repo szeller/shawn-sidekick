@@ -262,6 +262,56 @@ class GmailClient:
                     headers[name] = header["value"]
         return headers
 
+    def modify_message(
+        self,
+        message_id: str,
+        add_labels: Optional[List[str]] = None,
+        remove_labels: Optional[List[str]] = None
+    ) -> dict:
+        """Modify labels on a message.
+
+        Args:
+            message_id: The message ID to modify
+            add_labels: List of label IDs to add (e.g., ["STARRED", "IMPORTANT"])
+            remove_labels: List of label IDs to remove (e.g., ["UNREAD", "INBOX"])
+
+        Returns:
+            Updated message dict with id, threadId, and labelIds
+        """
+        json_data = {}
+        if add_labels:
+            json_data["addLabelIds"] = add_labels
+        if remove_labels:
+            json_data["removeLabelIds"] = remove_labels
+
+        return self._request(
+            "POST",
+            f"/users/me/messages/{message_id}/modify",
+            json_data=json_data
+        )
+
+    def mark_as_read(self, message_id: str) -> dict:
+        """Mark a message as read by removing the UNREAD label.
+
+        Args:
+            message_id: The message ID to mark as read
+
+        Returns:
+            Updated message dict
+        """
+        return self.modify_message(message_id, remove_labels=["UNREAD"])
+
+    def mark_as_unread(self, message_id: str) -> dict:
+        """Mark a message as unread by adding the UNREAD label.
+
+        Args:
+            message_id: The message ID to mark as unread
+
+        Returns:
+            Updated message dict
+        """
+        return self.modify_message(message_id, add_labels=["UNREAD"])
+
     def create_draft(
         self,
         to: str,
@@ -359,10 +409,15 @@ def main():
         print("  search <query> [max_results]  - Search for messages")
         print("  get <message_id>              - Get full message details")
         print("  create-draft <to> <subject> <body> - Create draft email")
+        print("  mark-read <message_id>        - Mark message as read")
+        print("  mark-unread <message_id>      - Mark message as unread")
+        print("  modify <message_id> [--add-labels X,Y] [--remove-labels X,Y] - Modify labels")
         print("\nExample:")
         print('  python -m sidekick.clients.gmail search "from:someone@example.com" 5')
         print('  python -m sidekick.clients.gmail get 18f2c4e5a1b2c3d4')
         print('  python -m sidekick.clients.gmail create-draft "user@example.com" "Hello" "Email body here"')
+        print('  python -m sidekick.clients.gmail mark-read 18f2c4e5a1b2c3d4')
+        print('  python -m sidekick.clients.gmail modify 18f2c4e5a1b2c3d4 --remove-labels UNREAD,INBOX')
         sys.exit(1)
 
     # Load configuration
@@ -422,6 +477,53 @@ def main():
             print("Draft created successfully!")
             print(f"Draft ID: {draft['id']}")
             print(f"Message ID: {draft['message']['id']}")
+
+        elif command == "mark-read":
+            if len(sys.argv) < 3:
+                print("Error: Missing message_id argument", file=sys.stderr)
+                sys.exit(1)
+
+            message_id = sys.argv[2]
+            client.mark_as_read(message_id)
+            print(f"Message marked as read: {message_id}")
+
+        elif command == "mark-unread":
+            if len(sys.argv) < 3:
+                print("Error: Missing message_id argument", file=sys.stderr)
+                sys.exit(1)
+
+            message_id = sys.argv[2]
+            client.mark_as_unread(message_id)
+            print(f"Message marked as unread: {message_id}")
+
+        elif command == "modify":
+            if len(sys.argv) < 3:
+                print("Error: Missing message_id argument", file=sys.stderr)
+                sys.exit(1)
+
+            message_id = sys.argv[2]
+            add_labels = []
+            remove_labels = []
+
+            i = 3
+            while i < len(sys.argv):
+                if sys.argv[i] == "--add-labels" and i + 1 < len(sys.argv):
+                    add_labels = [l.strip() for l in sys.argv[i + 1].split(",")]
+                    i += 2
+                elif sys.argv[i] == "--remove-labels" and i + 1 < len(sys.argv):
+                    remove_labels = [l.strip() for l in sys.argv[i + 1].split(",")]
+                    i += 2
+                else:
+                    print(f"Error: Unknown argument '{sys.argv[i]}'", file=sys.stderr)
+                    sys.exit(1)
+
+            result = client.modify_message(
+                message_id,
+                add_labels=add_labels if add_labels else None,
+                remove_labels=remove_labels if remove_labels else None
+            )
+            print(f"Message modified: {message_id}")
+            print(f"Labels: {result.get('labelIds', [])}")
 
         else:
             print(f"Error: Unknown command '{command}'", file=sys.stderr)

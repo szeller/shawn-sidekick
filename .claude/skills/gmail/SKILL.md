@@ -28,6 +28,21 @@ python -m sidekick.clients.gmail get MESSAGE_ID
 python -m sidekick.clients.gmail create-draft "to@example.com" "Subject" "Body"
 ```
 
+### Mark Message as Read
+```bash
+python -m sidekick.clients.gmail mark-read MESSAGE_ID
+```
+
+### Mark Message as Unread
+```bash
+python -m sidekick.clients.gmail mark-unread MESSAGE_ID
+```
+
+### Modify Message Labels
+```bash
+python -m sidekick.clients.gmail modify MESSAGE_ID --add-labels LABEL1,LABEL2 --remove-labels LABEL3
+```
+
 ## Gmail Search Syntax
 
 Common search operators:

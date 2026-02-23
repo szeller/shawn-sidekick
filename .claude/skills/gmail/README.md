@@ -175,6 +175,55 @@ Draft ID: r-1234567890
 Message ID: 18f2c4e5a1b2c3d4
 ```
 
+### Mark as Read
+
+Mark a message as read (removes UNREAD label):
+
+```bash
+python -m sidekick.clients.gmail mark-read MESSAGE_ID
+```
+
+Example:
+```bash
+python -m sidekick.clients.gmail mark-read 18f2c4e5a1b2c3d4
+```
+
+**Output:**
+```
+Message marked as read: 18f2c4e5a1b2c3d4
+```
+
+### Mark as Unread
+
+Mark a message as unread (adds UNREAD label):
+
+```bash
+python -m sidekick.clients.gmail mark-unread MESSAGE_ID
+```
+
+### Modify Labels
+
+Add or remove labels from a message:
+
+```bash
+python -m sidekick.clients.gmail modify MESSAGE_ID --add-labels LABEL1,LABEL2 --remove-labels LABEL3,LABEL4
+```
+
+Example:
+```bash
+# Remove UNREAD and INBOX labels
+python -m sidekick.clients.gmail modify 18f2c4e5a1b2c3d4 --remove-labels UNREAD,INBOX
+
+# Add STARRED label
+python -m sidekick.clients.gmail modify 18f2c4e5a1b2c3d4 --add-labels STARRED
+```
+
+**Output:**
+```
+Message modified: 18f2c4e5a1b2c3d4
+Labels: ['STARRED', 'CATEGORY_UPDATES']
+```
+
 ## Python Usage
 
 ```python
@@ -206,6 +255,15 @@ draft = client.create_draft(
     cc="cc@example.com"  # optional
 )
 print(f"Draft ID: {draft['id']}")
+
+# Mark message as read
+client.mark_as_read("MESSAGE_ID")
+
+# Mark message as unread
+client.mark_as_unread("MESSAGE_ID")
+
+# Modify labels
+client.modify_message("MESSAGE_ID", add_labels=["STARRED"], remove_labels=["UNREAD"])
 ```
 
 ## Gmail Search Syntax
