@@ -18,17 +18,18 @@ This agent reviews data sources and produces a single digest report:
 4. Confluence update notifications (Gmail label `confluence`)
 5. Incident notifications (Gmail label `sev-announce`) -- filtered to Commerce-relevant SEVs
 6. Microsoft To Do tasks with due dates (from "Dropbox 2026" list)
+7. Team meeting notes (Gmail label `meeting-notes`) -- weekly summaries sent by each team
 
 **Not included**: JIRA email notifications (low signal, skip for now).
 
-All label-based emails (paper-updates, confluence, sev-announce) are marked as read at the end after the full report is generated. This makes the agent re-runnable -- if interrupted before the final mark-read step, re-running picks up the same messages.
+All label-based emails (paper-updates, confluence, sev-announce, meeting-notes) are marked as read at the end after the full report is generated. This makes the agent re-runnable -- if interrupted before the final mark-read step, re-running picks up the same messages.
 
 Inbox emails are never marked read (user handles those manually via inbox-zero).
 
 ## Prerequisites
 
 - Google OAuth2 credentials configured in `.env` (Gmail + Calendar)
-- Gmail labels exist: `paper-updates`, `confluence`, `sev-announce`
+- Gmail labels exist: `paper-updates`, `confluence`, `sev-announce`, `meeting-notes`
 - Dropbox credentials configured in `.env` (for fetching Paper docs)
 - Atlassian credentials configured in `.env` (for fetching Confluence pages)
 - Microsoft To Do credentials configured in `.env` (for tasks with due dates)
@@ -189,6 +190,48 @@ Read the output. **Only include tasks that are overdue or due within the next 2 
 
 Sort by due date (overdue first, then soonest). Flag any overdue tasks prominently.
 
+### Step 5c: Fetch Team Meeting Notes
+
+Search for unread emails in the `meeting-notes` label:
+
+```bash
+python3 -m sidekick.clients.gmail search "label:meeting-notes is:unread" 50 > $TMP_DIR/meeting_notes.txt
+```
+
+Read the output. For each email:
+- Read the full message body (use `gmail get MESSAGE_ID` to get the complete content including HTML parts)
+- Note the message ID (save for mark-as-read at the end)
+- Extract the team/meeting name from the subject line
+- **Determine whether the email contains the actual notes or just links**:
+
+**If the email body contains substantive meeting notes** (agenda items, discussion points, decisions, action items -- more than just a link and a sentence or two of boilerplate):
+- Summarize the meeting notes directly from the email content
+- Still include any linked docs as reference URLs
+
+**If the email body is mostly a link to a Confluence page or Paper doc** (common pattern: a short sentence like "Notes from this week's meeting" plus a link):
+- Extract the Confluence or Paper URL from the email body
+- Fetch the linked doc instead:
+```bash
+# For Confluence links
+python3 -m sidekick.clients.confluence get-content-from-link "CONFLUENCE_URL"
+
+# For Paper links (resolve tracking URL first if needed)
+python3 -m sidekick.clients.dropbox resolve-tracking-url "TRACKING_URL"
+python3 -m sidekick.clients.dropbox get-paper-contents-from-link "PAPER_URL"
+```
+- Summarize the fetched doc content
+
+**For each set of meeting notes, provide:**
+- Team/meeting name
+- Date of the meeting (from email subject or body)
+- Key discussion topics (bulleted)
+- Decisions made
+- Action items assigned (note who owns each)
+- Blockers or risks raised
+- Link to the source (email or linked doc)
+
+**Important**: The goal is that Shawn gets a useful summary of what each team discussed without needing to open any docs. Lead with decisions and action items, then supporting context.
+
 ### Step 6: Identify Action Items
 
 Review all sections of the digest and compile a list of **action items (AIs)** -- things that require Shawn's direct response or action. These include:
@@ -214,7 +257,7 @@ python3 -m sidekick.clients.mstodo create "AI description" \
 
 Compile all findings into a single Markdown report with clickable links throughout.
 
-**Section order: Summary → Action Items → Calendar → Inbox → Paper → Confluence → Incidents → Tasks**
+**Section order: Summary → Action Items → Calendar → Inbox → Meeting Notes → Paper → Confluence → Incidents → Tasks**
 
 ```markdown
 ---
@@ -233,6 +276,7 @@ updated: YYYY-MM-DD HH:MM:SS
 - **Inbox**: N unread emails (not marked read)
 - **Paper updates**: N notifications across N docs
 - **Confluence updates**: N
+- **Meeting notes**: N team updates
 - **Incidents**: N Commerce-relevant SEVs
 - **Tasks due**: N (N overdue)
 - **All label notifications marked as read**
@@ -272,6 +316,20 @@ updated: YYYY-MM-DD HH:MM:SS
 
 - **From Alice** - Re: Q1 Planning follow-up
   Summary of what the email is about and any action needed.
+
+---
+
+## Meeting Notes (N team updates)
+
+- **Billing Team Weekly** (MM/DD) -- [source](link)
+  - **Decisions**: Approved migration to new billing provider for Q2
+  - **Action items**: Alice to draft cutover plan by MM/DD; Bob to update runbook
+  - **Discussion**: Reviewed Q1 churn metrics (down 2%), debated retry logic changes
+  - **Blockers**: Waiting on Legal review for new ToS language
+
+- **Payments Standup** (MM/DD) -- [source](link)
+  - **Key updates**: PCI audit passed; new gateway integration on track for MM/DD
+  - **Risks**: Third-party SDK deprecation in March, need migration plan
 
 ---
 
@@ -326,7 +384,7 @@ Routine updates, status changes, and background context. No action needed.
 After the report is fully generated, mark all collected label-based message IDs as read:
 
 ```bash
-# Mark all paper-updates, confluence, and sev-announce notification emails as read
+# Mark all paper-updates, confluence, sev-announce, and meeting-notes notification emails as read
 python3 -m sidekick.clients.gmail mark-read MESSAGE_ID
 ```
 
@@ -408,6 +466,14 @@ The workflow is: find the `_paper_track` URL in the email HTML → resolve it �
 - Action items are explicitly called out in a dedicated section at the bottom of the report.
 - The agent asks the user whether to create Microsoft To Do tasks for any identified AIs.
 - To Do tasks are created in the "Dropbox 2026" list with a link to the source in the body.
+
+### Meeting Notes
+- **Content vs link detection**: Read the full email body. If it contains structured meeting content (multiple agenda items, discussion points, decisions, action items), summarize from the email directly. If the body is short (a sentence or two) with a link to Confluence or Paper, fetch and summarize the linked doc instead.
+- **Confluence links**: Look for `atlassian.net/wiki` URLs in the email body. Use `confluence get-content-from-link` to fetch.
+- **Paper links**: Look for `dropbox.com/scl/fi` URLs or `links.dropbox.com/u/click?_paper_track` tracking URLs. Resolve tracking URLs first with `dropbox resolve-tracking-url`, then fetch with `dropbox get-paper-contents-from-link`.
+- **Lead with decisions and action items.** These are the highest-signal parts of meeting notes for a director. Discussion topics and context come after.
+- **Include the source link** (either the linked doc URL or a note that content was from the email itself) so Shawn can click through if he wants the full version.
+- **Dedup with Paper/Confluence sections**: If a meeting notes email links to a doc that also shows up in the `paper-updates` or `confluence` label, summarize it in the Meeting Notes section and note in the Paper/Confluence section that it was already covered under Meeting Notes (avoid duplicating the summary).
 
 ### Incident Filtering (sev-announce)
 - **Only Commerce/monetization-related SEVs** are included. Filter by team ownership or potential involvement.
