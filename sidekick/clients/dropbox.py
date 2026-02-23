@@ -19,16 +19,71 @@ class DropboxClient:
     - No external dependencies (Python stdlib only)
     """
 
-    def __init__(self, access_token: str, timeout: int = 30):
-        """Initialize Dropbox client with OAuth access token.
+    def __init__(
+        self,
+        access_token: str = None,
+        timeout: int = 30,
+        app_key: str = None,
+        app_secret: str = None,
+        refresh_token: str = None
+    ):
+        """Initialize Dropbox client with OAuth credentials.
+
+        Supports two modes:
+        1. Refresh token (preferred): Provide app_key, app_secret, and refresh_token.
+           Access tokens are obtained and refreshed automatically.
+        2. Static access token (legacy): Provide access_token directly.
 
         Args:
-            access_token: Dropbox OAuth 2.0 access token
+            access_token: Static OAuth 2.0 access token (legacy)
             timeout: Request timeout in seconds (default: 30)
+            app_key: Dropbox app key (for refresh token flow)
+            app_secret: Dropbox app secret (for refresh token flow)
+            refresh_token: OAuth 2.0 refresh token (for refresh token flow)
         """
-        self.access_token = access_token
+        self.app_key = app_key
+        self.app_secret = app_secret
+        self.refresh_token = refresh_token
+        self._access_token = access_token
         self.timeout = timeout
         self.api_call_count = 0
+
+    def _refresh_access_token(self) -> str:
+        """Refresh OAuth2 access token using refresh token.
+
+        Returns:
+            New access token
+
+        Raises:
+            ValueError: If token refresh fails
+        """
+        token_url = "https://api.dropboxapi.com/oauth2/token"
+        data = {
+            "client_id": self.app_key,
+            "client_secret": self.app_secret,
+            "refresh_token": self.refresh_token,
+            "grant_type": "refresh_token"
+        }
+
+        encoded_data = urllib.parse.urlencode(data).encode()
+        req = urllib.request.Request(token_url, data=encoded_data, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                result = json.loads(response.read().decode())
+                return result["access_token"]
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode() if e.fp else ""
+            raise ValueError(f"Failed to refresh Dropbox access token: {e.code} - {error_body}")
+        except (KeyError, json.JSONDecodeError):
+            raise ValueError("Invalid token response from Dropbox")
+
+    def _get_access_token(self) -> str:
+        """Get valid access token, refreshing if necessary."""
+        if not self._access_token and self.refresh_token:
+            self._access_token = self._refresh_access_token()
+        return self._access_token
 
     def _get_auth_headers(self) -> dict:
         """Get authorization headers for API requests.
@@ -37,11 +92,12 @@ class DropboxClient:
             dict with Authorization header
         """
         return {
-            "Authorization": f"Bearer {self.access_token}",
+            "Authorization": f"Bearer {self._get_access_token()}",
             "Content-Type": "application/json"
         }
 
-    def _request_api(self, endpoint: str, data: dict = None, content: bytes = None) -> dict:
+    def _request_api(self, endpoint: str, data: dict = None, content: bytes = None,
+                     retry_auth: bool = True) -> dict:
         """Make API request to api.dropboxapi.com.
 
         Used for metadata operations, sharing, and Paper export/import.
@@ -50,6 +106,7 @@ class DropboxClient:
             endpoint: API endpoint (e.g., "/2/files/get_metadata")
             data: JSON data to send in request body
             content: Optional binary content for requests like /files/import
+            retry_auth: Whether to retry once on 401 (token refresh)
 
         Returns:
             dict with API response (parsed JSON)
@@ -92,11 +149,13 @@ class DropboxClient:
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8') if e.fp else ''
 
-            if e.code == 401:
+            if e.code == 401 and retry_auth and self.refresh_token:
+                self._access_token = None  # Force token refresh
+                return self._request_api(endpoint, data, content, retry_auth=False)
+            elif e.code == 401:
                 raise ValueError(
                     f"Dropbox authentication failed (401 Unauthorized). "
-                    f"Check your access token. Get a new token at: "
-                    f"https://www.dropbox.com/developers/apps"
+                    f"Check your access token or refresh token configuration."
                 )
             elif e.code == 403:
                 raise ValueError(
@@ -133,7 +192,8 @@ class DropboxClient:
         except urllib.error.URLError as e:
             raise ConnectionError(f"Network error connecting to Dropbox: {e.reason}")
 
-    def _request_content(self, endpoint: str, api_arg: dict, upload_content: bytes = None) -> tuple:
+    def _request_content(self, endpoint: str, api_arg: dict, upload_content: bytes = None,
+                         retry_auth: bool = True) -> tuple:
         """Make content request to content.dropboxapi.com.
 
         Used for file download and upload operations.
@@ -142,6 +202,7 @@ class DropboxClient:
             endpoint: API endpoint (e.g., "/2/files/download")
             api_arg: JSON data for Dropbox-API-Arg header
             upload_content: Optional binary content for uploads
+            retry_auth: Whether to retry once on 401 (token refresh)
 
         Returns:
             tuple of (response_metadata: dict, content: bytes)
@@ -154,7 +215,7 @@ class DropboxClient:
         url = f"https://content.dropboxapi.com{endpoint}"
 
         headers = {
-            "Authorization": f"Bearer {self.access_token}",
+            "Authorization": f"Bearer {self._get_access_token()}",
             "Dropbox-API-Arg": json.dumps(api_arg)
         }
 
@@ -181,10 +242,13 @@ class DropboxClient:
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8') if e.fp else ''
 
-            if e.code == 401:
+            if e.code == 401 and retry_auth and self.refresh_token:
+                self._access_token = None  # Force token refresh
+                return self._request_content(endpoint, api_arg, upload_content, retry_auth=False)
+            elif e.code == 401:
                 raise ValueError(
                     f"Dropbox authentication failed (401 Unauthorized). "
-                    f"Check your access token."
+                    f"Check your access token or refresh token configuration."
                 )
             elif e.code == 409:
                 # Parse error for more specific message
@@ -329,7 +393,7 @@ class DropboxClient:
 
             url = "https://content.dropboxapi.com/2/files/export"
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {self._get_access_token()}",
                 "Dropbox-API-Arg": json.dumps(api_arg)
             }
 
@@ -434,36 +498,159 @@ class DropboxClient:
 
     @staticmethod
     def _paper_html_to_markdown(html_text: str) -> str:
-        """Convert Paper doc HTML from export_shared_link to approximate markdown."""
+        """Convert Paper doc HTML from export_shared_link to approximate markdown.
+
+        Handles Paper-specific HTML structures:
+        - Comment thread markers (attrcomment spans) → [comment] annotation
+        - Inline code (span.inline-code) → backtick code
+        - Tables (standard HTML tables with ace-line content) → markdown tables
+        - Nested lists (listindent1-4) → indented bullet points
+        - Headings, bold, italic, links → standard markdown
+        """
         import re as _re
         from html import unescape
 
-        # Extract content from the document body
-        # Paper HTML has the doc content inside specific div structures
-        body_match = _re.search(r'<div[^>]*class="[^"]*listtype-indent[^"]*"[^>]*>.*', html_text, _re.DOTALL)
-        if not body_match:
-            # Try to find any content area
-            body_match = _re.search(r'<body[^>]*>(.*?)</body>', html_text, _re.DOTALL)
+        # Extract body content
+        body_match = _re.search(r'<body[^>]*>(.*)</body>', html_text, _re.DOTALL)
+        text = body_match.group(1) if body_match else html_text
 
-        text = body_match.group(0) if body_match else html_text
+        # --- Phase 1: Convert structured elements before stripping tags ---
 
-        # Convert common HTML to markdown
-        text = _re.sub(r'<h1[^>]*>(.*?)</h1>', r'# \1\n', text)
-        text = _re.sub(r'<h2[^>]*>(.*?)</h2>', r'## \1\n', text)
-        text = _re.sub(r'<h3[^>]*>(.*?)</h3>', r'### \1\n', text)
-        text = _re.sub(r'<li[^>]*>(.*?)</li>', r'- \1', text)
+        # Comment thread markers: Paper marks commented-on text with attrcomment
+        # spans. The actual comment content is not in the export, only the marker.
+        # Unwrap the attrcomment span and its inner comment-extra-inner-span,
+        # then append a [comment] marker to the text content.
+        def _replace_comment_span(m):
+            inner = m.group(1)
+            # Strip the inner comment-extra-inner-span wrapper if present
+            inner = _re.sub(r"<span[^>]*class=['\"]comment-extra-inner-span['\"][^>]*>", '', inner)
+            inner = inner.replace('</span>', '', 1) if 'comment-extra-inner-span' not in inner else inner
+            return inner + ' [comment]'
+
+        text = _re.sub(
+            r"<span[^>]*class=\"[^\"]*attrcomment[^\"]*\"[^>]*>(.*?)</span>\s*</span>",
+            _replace_comment_span,
+            text, flags=_re.DOTALL
+        )
+
+        # Inline code spans
+        text = _re.sub(
+            r'<span[^>]*class="inline-code"[^>]*>(.*?)</span>',
+            r'`\1`',
+            text
+        )
+
+        # Tables: convert to markdown tables
+        text = _re.sub(
+            r'<table[^>]*>(.*?)</table>',
+            lambda m: DropboxClient._convert_table_to_markdown(m.group(0)),
+            text, flags=_re.DOTALL
+        )
+
+        # Headings (Paper uses h1/h2/h3 inside line-list-type divs, or inline)
+        text = _re.sub(r'<h1[^>]*>(.*?)</h1>', r'\n# \1\n', text, flags=_re.DOTALL)
+        text = _re.sub(r'<h2[^>]*>(.*?)</h2>', r'\n## \1\n', text, flags=_re.DOTALL)
+        text = _re.sub(r'<h3[^>]*>(.*?)</h3>', r'\n### \1\n', text, flags=_re.DOTALL)
+
+        # Paper title (40px font-size div)
+        text = _re.sub(
+            r'<div[^>]*font-size:\s*40px[^>]*>(.*?)</div>',
+            r'\n# \1\n',
+            text, flags=_re.DOTALL
+        )
+
+        # Paper section headers (24px font-size div)
+        text = _re.sub(
+            r'<div[^>]*font-size:\s*24px[^>]*>(.*?)</div>',
+            r'\n## \1\n',
+            text, flags=_re.DOTALL
+        )
+
+        # Nested lists: handle indentation levels before flattening
+        for level in range(4, 0, -1):
+            indent = '  ' * (level - 1)
+            text = _re.sub(
+                rf'<li[^>]*class="[^"]*listindent{level}[^"]*"[^>]*>(.*?)</li>',
+                rf'{indent}- \1\n',
+                text, flags=_re.DOTALL
+            )
+        # Also handle li with listindent in parent ul
+        for level in range(4, 0, -1):
+            indent = '  ' * (level - 1)
+            text = _re.sub(
+                rf'<ul[^>]*class="[^"]*listindent{level}[^"]*"[^>]*>\s*<li[^>]*>(.*?)</li>\s*</ul>',
+                rf'{indent}- \1\n',
+                text, flags=_re.DOTALL
+            )
+
+        # Remaining list items (no indentation class)
+        text = _re.sub(r'<li[^>]*>(.*?)</li>', r'- \1\n', text, flags=_re.DOTALL)
+
+        # Paragraphs and line breaks
         text = _re.sub(r'<br\s*/?>', '\n', text)
         text = _re.sub(r'<p[^>]*>(.*?)</p>', r'\1\n\n', text, flags=_re.DOTALL)
+
+        # Inline formatting
         text = _re.sub(r'<strong>(.*?)</strong>', r'**\1**', text)
         text = _re.sub(r'<b>(.*?)</b>', r'**\1**', text)
         text = _re.sub(r'<em>(.*?)</em>', r'*\1*', text)
         text = _re.sub(r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', r'[\2](\1)', text)
-        # Strip remaining tags
+
+        # Div-based line breaks (Paper uses divs for lines)
+        text = _re.sub(r'</div>\s*<div', '</div>\n<div', text)
+
+        # --- Phase 2: Strip remaining HTML tags ---
         text = _re.sub(r'<[^>]+>', '', text)
         text = unescape(text)
-        # Clean up whitespace
-        text = _re.sub(r'\n{3,}', '\n\n', text)
+
+        # --- Phase 3: Clean up ---
+        # Merge adjacent bold markers from Paper's split <b> tags: **foo****bar** → **foo bar**
+        text = _re.sub(r'\*\*\s*\*\*', ' ', text)
+        text = _re.sub(r'[ \t]+\n', '\n', text)   # trailing whitespace
+        text = _re.sub(r'\n{3,}', '\n\n', text)    # excessive blank lines
         return text.strip()
+
+    @staticmethod
+    def _convert_table_to_markdown(table_html: str) -> str:
+        """Convert an HTML table to a markdown table.
+
+        Paper tables use <td> cells containing <div class="ace-line"><span>text</span></div>.
+
+        Args:
+            table_html: HTML string of a single <table>...</table>
+
+        Returns:
+            Markdown table string
+        """
+        import re as _re
+        from html import unescape
+
+        rows = _re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, _re.DOTALL)
+        if not rows:
+            return ''
+
+        md_rows = []
+        for row_html in rows:
+            cells = _re.findall(r'<td[^>]*>(.*?)</td>', row_html, _re.DOTALL)
+            cell_texts = []
+            for cell in cells:
+                # Extract text from spans within ace-line divs
+                text = _re.sub(r'<[^>]+>', '', cell)
+                text = unescape(text).strip()
+                # Replace pipes that would break table formatting
+                text = text.replace('|', '\\|')
+                cell_texts.append(text)
+            if cell_texts:
+                md_rows.append('| ' + ' | '.join(cell_texts) + ' |')
+
+        if not md_rows:
+            return ''
+
+        # Add separator after header row
+        num_cols = md_rows[0].count('|') - 1
+        separator = '| ' + ' | '.join(['---'] * num_cols) + ' |'
+        result = [md_rows[0], separator] + md_rows[1:]
+        return '\n' + '\n'.join(result) + '\n'
 
     def export_shared_link(
         self,
@@ -596,7 +783,7 @@ class DropboxClient:
 
         url = "https://api.dropboxapi.com/2/files/paper/update"
         headers = {
-            "Authorization": f"Bearer {self.access_token}",
+            "Authorization": f"Bearer {self._get_access_token()}",
             "Dropbox-API-Arg": json.dumps(api_arg),
             "Content-Type": "application/octet-stream"
         }
@@ -728,7 +915,7 @@ def main():
     try:
         from sidekick.config import get_dropbox_config
         config = get_dropbox_config()
-        client = DropboxClient(config["access_token"])
+        client = DropboxClient(**config)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

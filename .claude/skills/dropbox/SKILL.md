@@ -11,10 +11,12 @@ Command-line interface for Dropbox file and Paper doc operations.
 
 When invoked, use the Dropbox client to handle the request: $ARGUMENTS
 
+**Configuration**: Uses OAuth2 refresh tokens (DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN). Access tokens are refreshed automatically. See README.md for setup.
+
 **Special handling for Paper docs via export-shared-link:**
 - The command returns HTML with extensive CSS
-- Always convert the HTML output to Markdown before presenting to the user
-- This ensures readable output for Paper documents accessed from team space
+- The client automatically converts HTML to Markdown (including tables, inline code, nested lists, and comment markers)
+- Text with comment threads is annotated with `[comment]` — actual comment content comes from email notifications, not the doc export
 
 ## Available Commands
 

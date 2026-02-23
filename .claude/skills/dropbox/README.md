@@ -6,16 +6,30 @@ Command-line interface for Dropbox file and Paper doc operations.
 
 Configuration is automatically loaded from `.env` file in project root.
 
-Create a `.env` file:
+### OAuth2 Refresh Token (Recommended)
+
+Uses a long-lived refresh token that auto-refreshes access tokens. No manual token rotation needed.
+
 ```bash
-DROPBOX_ACCESS_TOKEN=your_dropbox_access_token
+DROPBOX_APP_KEY=your_app_key
+DROPBOX_APP_SECRET=your_app_secret
+DROPBOX_REFRESH_TOKEN=your_refresh_token
 ```
 
-Get your Dropbox access token:
+Setup:
 1. Go to https://www.dropbox.com/developers/apps
 2. Create a new app with "Full Dropbox" access
 3. Go to Permissions tab and enable: `files.content.read`, `files.content.write`, `sharing.read`
-4. Generate access token in Settings tab
+4. Note the App key and App secret from the Settings tab
+5. Run `python3 tools/get_dropbox_refresh_token.py` to complete the OAuth flow
+
+### Static Access Token (Legacy)
+
+Short-lived (~4 hours). Not recommended for automated workflows.
+
+```bash
+DROPBOX_ACCESS_TOKEN=your_access_token
+```
 
 **Note**: Configuration can also be set via environment variables if `.env` file is not present.
 
@@ -316,9 +330,9 @@ You can also import and use the client in Python scripts:
 from sidekick.clients.dropbox import DropboxClient
 from sidekick.config import get_dropbox_config
 
-# Initialize client from config
+# Initialize client from config (works with both refresh token and legacy access token)
 config = get_dropbox_config()
-client = DropboxClient(config["access_token"])
+client = DropboxClient(**config)
 
 # Get file contents
 content = client.get_file_contents("/Documents/notes.txt")
@@ -387,6 +401,51 @@ html_str = html_content.decode('utf-8')
 
 # Claude converts this HTML to Markdown automatically when presenting to users
 # For programmatic use, you can save the HTML and convert it as needed
+```
+
+## Paper Notification Workflow
+
+The standard pattern for processing Paper doc update notifications from email. This is the primary way Paper docs are consumed in automated workflows (e.g., daily digest, 1:1 prep).
+
+### Steps
+
+1. **Get notification emails** — Search Gmail for `label:paper-updates` (or similar label)
+2. **Resolve tracking URLs** — Paper notification emails contain `links.dropbox.com/u/click?_paper_track=...` URLs. Resolve to actual share links:
+   ```bash
+   python -m sidekick.clients.dropbox resolve-tracking-url "https://links.dropbox.com/u/click?_paper_track=..."
+   # Returns: https://www.dropbox.com/scl/fi/.../Doc.paper?rlkey=...&dl=0
+   ```
+3. **Fetch doc content** — Use the resolved share link to get the full doc:
+   ```bash
+   python -m sidekick.clients.dropbox get-paper-contents-from-link "https://www.dropbox.com/scl/fi/..."
+   ```
+   This auto-handles cross-namespace docs (falls back to `export-shared-link` + HTML-to-markdown conversion).
+4. **Identify comments** — The markdown output marks commented-on text with `[comment]` annotations. The actual comment content is not available in the Dropbox export — comment text comes from the email notification body.
+
+### Comment Handling
+
+Paper's export API marks which text has comment threads attached but does **not** include the comment content (author, message, timestamp). To get full comment context:
+- Parse the email notification body for comment snippets and author names
+- Cross-reference with the `[comment]` markers in the exported doc content
+- The email typically shows who commented and a preview of what they said
+
+### Example: Processing Paper Updates
+
+```python
+from sidekick.clients.dropbox import DropboxClient
+from sidekick.config import get_dropbox_config
+
+config = get_dropbox_config()
+client = DropboxClient(**config)
+
+# Resolve tracking URL from email
+share_url = DropboxClient.resolve_tracking_url(tracking_url_from_email)
+
+# Fetch doc content as markdown
+content = client.get_paper_contents_from_link(share_url)
+
+# Content includes [comment] markers where threads exist
+# e.g., "**Reduce Finance Hourly Chain** [comment] — $14K/mo savings"
 ```
 
 ## Common Use Cases
@@ -513,7 +572,7 @@ The client automatically detects the type and handles appropriately.
 Error: Dropbox authentication failed (401 Unauthorized)
 ```
 
-Solution: Check your access token in `.env` file. Generate a new token at https://www.dropbox.com/developers/apps
+Solution: If using refresh tokens, verify `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, and `DROPBOX_REFRESH_TOKEN` are correct in `.env`. Re-run `python3 tools/get_dropbox_refresh_token.py` if needed. If using a static access token, it has likely expired (~4 hours) — switch to refresh tokens or generate a new token at https://www.dropbox.com/developers/apps
 
 ### Permission Error
 

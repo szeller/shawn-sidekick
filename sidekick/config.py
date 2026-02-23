@@ -250,22 +250,39 @@ def get_user_config() -> dict:
 def get_dropbox_config() -> dict:
     """Get Dropbox configuration from .env file or environment variables.
 
+    Prefers OAuth2 refresh token flow (DROPBOX_APP_KEY, DROPBOX_APP_SECRET,
+    DROPBOX_REFRESH_TOKEN) which auto-refreshes. Falls back to static
+    DROPBOX_ACCESS_TOKEN for backward compatibility.
+
     Returns:
-        dict with key: access_token
+        dict with keys: app_key, app_secret, refresh_token (preferred)
+        OR dict with key: access_token (legacy fallback)
 
     Raises:
         ValueError: If required environment variables are missing
     """
     env_file_vars = _load_env_file()
 
+    app_key = _get_env("DROPBOX_APP_KEY", env_file_vars)
+    app_secret = _get_env("DROPBOX_APP_SECRET", env_file_vars)
+    refresh_token = _get_env("DROPBOX_REFRESH_TOKEN", env_file_vars)
+
+    if all([app_key, app_secret, refresh_token]):
+        return {
+            "app_key": app_key,
+            "app_secret": app_secret,
+            "refresh_token": refresh_token
+        }
+
+    # Legacy fallback: static access token
     access_token = _get_env("DROPBOX_ACCESS_TOKEN", env_file_vars)
 
     if not access_token:
         raise ValueError(
             "Missing required Dropbox configuration. "
-            "Set DROPBOX_ACCESS_TOKEN in .env file or environment variables. "
-            "Get token at: https://www.dropbox.com/developers/apps "
-            "(create app → generate access token)"
+            "Set DROPBOX_APP_KEY, DROPBOX_APP_SECRET, and DROPBOX_REFRESH_TOKEN "
+            "in .env file (preferred), or DROPBOX_ACCESS_TOKEN (legacy). "
+            "See .env.example for setup instructions."
         )
 
     return {"access_token": access_token}
