@@ -207,6 +207,43 @@ class DropboxClient:
         except urllib.error.URLError as e:
             raise ConnectionError(f"Network error connecting to Dropbox: {e.reason}")
 
+    @staticmethod
+    def resolve_tracking_url(tracking_url: str) -> str:
+        """Resolve a links.dropbox.com tracking URL to its final destination.
+
+        Paper notification emails contain _paper_track URLs that redirect
+        to dropbox.com/scl/fi/... share links. This method follows the
+        redirect without auto-following to extract the Location header.
+
+        Args:
+            tracking_url: A links.dropbox.com/u/click?_paper_track=... URL
+
+        Returns:
+            str with the resolved URL (typically a dropbox.com/scl/fi/... URL)
+
+        Raises:
+            ValueError: If the URL doesn't redirect or isn't a tracking URL
+        """
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None  # Don't follow, just capture
+
+        opener = urllib.request.build_opener(_NoRedirect)
+        req = urllib.request.Request(tracking_url)
+        try:
+            resp = opener.open(req, timeout=10)
+            # No redirect -- unexpected
+            raise ValueError(f"Tracking URL did not redirect (status {resp.status})")
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308):
+                location = e.headers.get('Location', '')
+                if not location:
+                    raise ValueError("Redirect had no Location header")
+                return location
+            raise ValueError(f"Tracking URL returned HTTP {e.code}")
+        except urllib.error.URLError as e:
+            raise ConnectionError(f"Network error resolving tracking URL: {e.reason}")
+
     def _is_paper_link(self, link: str) -> bool:
         """Check if link is for Paper doc based on URL.
 
@@ -352,6 +389,11 @@ class DropboxClient:
     def get_paper_contents_from_link(self, share_link: str, export_format: str = 'markdown') -> str:
         """Get Paper doc content via share link.
 
+        Tries the file ID approach first (/files/export), which returns clean
+        markdown. If that fails (e.g., file is in another user's namespace),
+        falls back to export_shared_link (/sharing/export_shared_link) which
+        returns HTML that is then converted to approximate markdown.
+
         Args:
             share_link: Dropbox Paper share link URL
             export_format: Export format - 'markdown' (default) or 'html'
@@ -362,22 +404,66 @@ class DropboxClient:
         Raises:
             ValueError: If link is invalid or not a Paper doc
         """
-        # For shared links, use the URL directly with special format
         # First resolve to get the ID
         link_metadata = self.resolve_share_link(share_link)
 
         # Try to get the file ID
         file_id = link_metadata.get('id')
         if file_id:
-            # Use the file ID directly
             path = f"{file_id}"
         else:
-            # Fallback to path if ID not available
             path = link_metadata.get('path_lower') or link_metadata.get('path')
             if not path:
                 raise ValueError("Could not extract path or ID from share link metadata")
 
-        return self.get_paper_contents(path, export_format)
+        # Try the clean export path first
+        try:
+            return self.get_paper_contents(path, export_format)
+        except (ValueError, RuntimeError):
+            pass
+
+        # Fallback: use export_shared_link (works for docs in other namespaces)
+        content = self.export_shared_link(share_link)
+        html_text = content.decode('utf-8', errors='ignore')
+
+        if export_format == 'html':
+            return html_text
+
+        # Convert Paper HTML to approximate markdown
+        return self._paper_html_to_markdown(html_text)
+
+    @staticmethod
+    def _paper_html_to_markdown(html_text: str) -> str:
+        """Convert Paper doc HTML from export_shared_link to approximate markdown."""
+        import re as _re
+        from html import unescape
+
+        # Extract content from the document body
+        # Paper HTML has the doc content inside specific div structures
+        body_match = _re.search(r'<div[^>]*class="[^"]*listtype-indent[^"]*"[^>]*>.*', html_text, _re.DOTALL)
+        if not body_match:
+            # Try to find any content area
+            body_match = _re.search(r'<body[^>]*>(.*?)</body>', html_text, _re.DOTALL)
+
+        text = body_match.group(0) if body_match else html_text
+
+        # Convert common HTML to markdown
+        text = _re.sub(r'<h1[^>]*>(.*?)</h1>', r'# \1\n', text)
+        text = _re.sub(r'<h2[^>]*>(.*?)</h2>', r'## \1\n', text)
+        text = _re.sub(r'<h3[^>]*>(.*?)</h3>', r'### \1\n', text)
+        text = _re.sub(r'<li[^>]*>(.*?)</li>', r'- \1', text)
+        text = _re.sub(r'<br\s*/?>', '\n', text)
+        text = _re.sub(r'<p[^>]*>(.*?)</p>', r'\1\n\n', text, flags=_re.DOTALL)
+        text = _re.sub(r'<strong>(.*?)</strong>', r'**\1**', text)
+        text = _re.sub(r'<b>(.*?)</b>', r'**\1**', text)
+        text = _re.sub(r'<em>(.*?)</em>', r'*\1*', text)
+        text = _re.sub(r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', r'[\2](\1)', text)
+        # Strip remaining tags
+        text = _re.sub(r'<[^>]+>', '', text)
+        text = unescape(text)
+        # Clean up whitespace
+        text = _re.sub(r'\n{3,}', '\n\n', text)
+        return text.strip()
 
     def export_shared_link(
         self,
@@ -627,6 +713,7 @@ def main():
         print("", file=sys.stderr)
         print("Commands:", file=sys.stderr)
         print("  get-file-contents <path>", file=sys.stderr)
+        print("  resolve-tracking-url <tracking_url>", file=sys.stderr)
         print("  export-shared-link <url> [--path <path>] [--password <password>] [--override-download]", file=sys.stderr)
         print("  get-metadata <path>", file=sys.stderr)
         print("  get-paper-contents <path> [--format markdown|html]", file=sys.stderr)
@@ -764,6 +851,15 @@ def main():
 
             metadata = client.update_paper_contents(path, content_text, import_format)
             print(f"Updated Paper doc at {path}", file=sys.stderr)
+
+        elif command == "resolve-tracking-url":
+            if len(sys.argv) < 3:
+                print("Error: Missing tracking_url argument", file=sys.stderr)
+                sys.exit(1)
+
+            tracking_url = sys.argv[2]
+            resolved = DropboxClient.resolve_tracking_url(tracking_url)
+            print(resolved)
 
         elif command == "export-shared-link":
             if len(sys.argv) < 3:

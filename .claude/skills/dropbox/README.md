@@ -77,10 +77,29 @@ Exports Paper doc content to stdout in the specified format. Supports `markdown`
 ### Get Paper Doc Contents from Share Link
 
 ```bash
-python -m sidekick.clients.dropbox get-paper-contents-from-link "https://paper.dropbox.com/doc/Title-abc123"
+python -m sidekick.clients.dropbox get-paper-contents-from-link "https://www.dropbox.com/scl/fi/.../Doc.paper?rlkey=...&dl=0"
 ```
 
-Get Paper doc content using a Paper share link. Optional `--format` flag works the same as `get-paper-contents`.
+Get Paper doc content using a share link. Optional `--format` flag works the same as `get-paper-contents`.
+
+For docs in another user's namespace (where `/files/export` fails), this automatically falls back to `export-shared-link` with HTML-to-markdown conversion.
+
+### Resolve Paper Tracking URL
+
+```bash
+python -m sidekick.clients.dropbox resolve-tracking-url "https://links.dropbox.com/u/click?_paper_track=..."
+```
+
+Resolves a Paper notification email tracking URL to a `dropbox.com/scl/fi/...` share link. Paper notification emails embed `_paper_track` URLs that 302-redirect to the actual share link. This command follows the redirect and returns the resolved URL.
+
+Typical workflow:
+```bash
+# 1. Get the scl/fi URL from a tracking URL
+SHARE_URL=$(python -m sidekick.clients.dropbox resolve-tracking-url "TRACKING_URL")
+
+# 2. Fetch the doc content
+python -m sidekick.clients.dropbox get-paper-contents-from-link "$SHARE_URL"
+```
 
 ### Export from Shared Link
 
@@ -318,6 +337,12 @@ client.create_paper_contents("/Paper/NewDoc.paper", "# Title\nContent", import_f
 
 # Update Paper doc
 client.update_paper_contents("/Paper/MyDoc.paper", "# Updated", import_format="markdown")
+
+# Resolve Paper tracking URL from notification email
+resolved_url = DropboxClient.resolve_tracking_url(
+    "https://links.dropbox.com/u/click?_paper_track=..."
+)
+# Returns: https://www.dropbox.com/scl/fi/.../Doc.paper?dl=0
 
 # Resolve share link
 link_metadata = client.resolve_share_link("https://www.dropbox.com/s/abc123/file.txt")

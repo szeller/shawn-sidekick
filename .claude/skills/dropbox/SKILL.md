@@ -71,7 +71,16 @@ python -m sidekick.clients.dropbox get-paper-contents /Paper/Doc.paper [--format
 
 ### Get Paper Doc from Share Link
 ```bash
-python -m sidekick.clients.dropbox get-paper-contents-from-link "https://paper.dropbox.com/doc/..."
+python -m sidekick.clients.dropbox get-paper-contents-from-link "https://www.dropbox.com/scl/fi/.../Doc.paper?..."
+```
+
+Note: This now auto-falls back to `export-shared-link` + HTML-to-markdown conversion for docs in other users' namespaces.
+
+### Resolve Paper Tracking URL
+
+Resolve a `links.dropbox.com/u/click?_paper_track=...` URL (from Paper notification emails) to a `dropbox.com/scl/fi/...` share link:
+```bash
+python -m sidekick.clients.dropbox resolve-tracking-url "https://links.dropbox.com/u/click?_paper_track=..."
 ```
 
 ### Create Paper Doc
