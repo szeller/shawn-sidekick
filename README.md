@@ -15,8 +15,14 @@ a list of bullets as a summary for executive leadership"
 "For all teams that report to me, look up completed work across JIRA Epics for 
 the past 30 days and generate a team accomplishments report with kudos to specific engineers"
 
-"Migrate Paper 1:1 docs to Confluence for direct reports with restricted access and update 
+"Migrate Paper 1:1 docs to Confluence for direct reports with restricted access and update
 calendar event links."
+
+"Search Slack for activity in #engineering over the last 30 days and summarize the key
+themes, decisions, and action items by person"
+
+"Find my most recent Zoom meeting with a transcript and generate a structured summary
+with key topics, decisions, and follow-up items"
 ```
 
 Note that these exact scenarios are not hard coded anywhere; Claude can combine existing client code and Skills on the fly to do these, all from natural language prompts. 
@@ -277,6 +283,8 @@ Current skills (each is a single-file client + markdown docs):
 
 - **JIRA** - Query issues, traverse hierarchies, manage labels
 - **Confluence** - Search pages, read/write content, manage 1:1 docs
+- **Slack** - Search messages and channels (via Dash MCP)
+- **Zoom** - Access meeting transcripts and recordings (via Dash MCP)
 - **Chrome** - Query browsing history, search visited pages, filter by service (Confluence, JIRA, Paper, etc.)
 - **Dropbox** - Read/write files and Paper docs
 - **OmniFocus** - Task management (macOS only)
@@ -311,7 +319,32 @@ GOOGLE_CLIENT_SECRET=your_secret
 GOOGLE_REFRESH_TOKEN=your_refresh_token
 ```
 
-**Getting tokens:** Check the README for each skill for provisioning instructions, including where to generate API tokens:
+**Getting tokens:** Check the README for each skill for provisioning instructions, including where to generate API tokens.
+
+### Connecting Dash MCP
+
+To enable Slack, Zoom, and other Dropbox Dash integrations via MCP (Model Context Protocol):
+
+1. **Install Dash MCP Server:**
+   - Open Claude *in the terminal*
+   - Use /mcp and add via URL [https://mcp.dropbox.com/dash](https://mcp.dropbox.com/dash)
+   - It will prompt you to authenticate in a browser
+   - Make sure you enable the desired connectors on Dash web
+
+2. **Available Dash Connectors:**
+   - **Slack** - Search messages, channels, files with full Slack search syntax
+   - **Zoom** - Access meeting transcripts and recordings
+
+It also has connectors for Jira and Confluence; which has long-lived authentication tokens. 
+
+3. **Usage:**
+   Once connected, Claude Code can automatically use Dash MCP to:
+   ```
+   "Search Slack #engineering for discussions about API changes this week"
+   "Find my recent Zoom meetings and summarize the transcripts"
+   ```
+
+Try adding your most important Slack channels to `CLAUDE.local.md` for quick context. 
 
 ## Adding New Skills
 

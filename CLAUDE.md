@@ -149,6 +149,7 @@ Rules for clients
 
 ### Running
 - Highlight in output any files that did not exist, or URLs that 404ed
+- When calling client functions that return HTML, use the /markdown skill to convert to Markdown before trying to do something with the results
 
 ### Providing local context
 The `CLAUDE.local.md` contains context on 1:1 docs, meeting docs, teams, people, and projects. 
