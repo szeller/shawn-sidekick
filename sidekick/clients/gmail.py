@@ -235,8 +235,9 @@ class GmailClient:
                         text_parts.append(extract_text(part))
 
                 # Return text/plain if available, otherwise HTML
-                if text_parts:
-                    return "\n".join(filter(None, text_parts))
+                text_result = "\n".join(filter(None, text_parts))
+                if text_result.strip():
+                    return text_result
                 return "\n".join(filter(None, html_parts))
 
             return ""

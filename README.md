@@ -420,6 +420,7 @@ Multi-step workflows that coordinate multiple clients:
 - [Weekly Report](.claude/agents/weekly_report.md) - Generate weekly summaries from 1:1 and meeting docs
 - [Project Review](.claude/agents/project_review.md) - Generate project status reports from JIRA data
 - [Welcome Doc](.claude/agents/welcome-doc.md) - Create personalized employee onboarding documents with interactive prompts
+- [MMR Review](.claude/agents/mmr_review.md) - Automated Monthly Metrics Review analysis, non-green investigation, and MMR AI creation
 
 Or just ask Claude Code:
 ```

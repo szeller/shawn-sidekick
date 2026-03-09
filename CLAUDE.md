@@ -28,6 +28,25 @@ cp .env.example .env
 # Edit .env with your actual credentials
 ```
 
+### Running Confluence Client
+
+```bash
+# Search for pages
+python -m sidekick.clients.confluence search "Monthly Metrics Review"
+
+# Get page from link (supports short links, full URLs, pageId URLs)
+python -m sidekick.clients.confluence get-page-from-link "https://company.atlassian.net/wiki/x/SHORT_ID"
+
+# Read page content
+python -m sidekick.clients.confluence read-page PAGE_ID
+```
+
+**Comments API** (Python only, not CLI):
+- Read inline comments: `GET /wiki/api/v2/pages/{id}/inline-comments`
+- Create inline comments: `POST /wiki/api/v2/inline-comments` (requires `textSelection`, `textSelectionMatchCount`, `textSelectionMatchIndex`)
+- Create footer comments: `POST /wiki/rest/api/content` with `type: "comment"`
+- See `.claude/skills/confluence/README.md` for full API details
+
 ### Running JIRA Client
 
 Configuration is automatically loaded from `.env` file. Output uses a readable microformat:

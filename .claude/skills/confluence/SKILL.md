@@ -48,6 +48,34 @@ python -m sidekick.clients.confluence update-page PAGE_ID content.html [--title 
 python -m sidekick.clients.confluence add-topic-to-oneonone PERSON "Topic" [--section SECTION]
 ```
 
+### Get Page from Link
+```bash
+python -m sidekick.clients.confluence get-page-from-link "https://company.atlassian.net/wiki/x/SHORT_ID"
+python -m sidekick.clients.confluence get-content-from-link "https://company.atlassian.net/wiki/x/SHORT_ID"
+```
+
+### Read Inline Comments (Python API)
+```python
+# v2 API - returns inline comments with marker refs and resolution status
+result = client._request('GET', '/wiki/api/v2/pages/PAGE_ID/inline-comments',
+    params={'body-format': 'storage'})
+```
+
+### Create Inline Comment (Python API)
+```python
+# v2 API - anchors comment to specific text on the page
+payload = {
+    "pageId": "PAGE_ID",
+    "body": {"representation": "storage", "value": "<p>Comment text</p>"},
+    "inlineCommentProperties": {
+        "textSelection": "Text to anchor to",
+        "textSelectionMatchCount": 1,
+        "textSelectionMatchIndex": 0
+    }
+}
+result = client._request('POST', '/wiki/api/v2/inline-comments', json_data=payload)
+```
+
 ## Search Cache
 
 The Confluence client automatically caches search query to page mappings for faster repeated searches.

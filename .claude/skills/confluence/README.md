@@ -646,12 +646,148 @@ python -m sidekick.clients.confluence create-page DEV "New Page" new-page.html
 - [JIRA Query](jira.md) - Query JIRA issues (uses same credentials)
 - [Output Management](output.md) - Save command output with metadata
 
+## Comments API
+
+Confluence supports two types of comments: **inline comments** (anchored to specific text on a page) and **footer comments** (at the bottom of the page). The MMR workflow uses inline comments.
+
+### Reading Comments
+
+#### Inline Comments (v2 API)
+
+```python
+# Get all inline comments on a page
+result = client._request('GET', '/wiki/api/v2/pages/PAGE_ID/inline-comments',
+    params={'body-format': 'storage'})
+
+for comment in result.get('results', []):
+    print(f"ID: {comment['id']}")
+    print(f"Status: {comment['resolutionStatus']}")  # "open" or "resolved"
+    print(f"Body: {comment['body']['storage']['value']}")
+    print(f"Marker: {comment['properties']['inlineMarkerRef']}")
+    print(f"Anchored to: {comment['properties']['inlineOriginalSelection']}")
+```
+
+Each inline comment has:
+- `resolutionStatus`: "open" or "resolved"
+- `properties.inlineMarkerRef`: UUID linking to an `ac:inline-comment-marker` in the page HTML
+- `properties.inlineOriginalSelection`: the text the comment was originally anchored to
+
+#### Footer Comments (v1 API)
+
+```python
+result = client._request('GET', '/wiki/rest/api/content/PAGE_ID/child/comment',
+    params={'expand': 'body.storage,extensions.inlineProperties,extensions.resolution', 'limit': 50})
+```
+
+Note: This v1 endpoint returns both footer and inline comments. Check `extensions.location` to distinguish (`"inline"` vs absent).
+
+#### How Inline Comment Anchoring Works
+
+Page HTML contains marker elements that comments attach to:
+
+```html
+<ac:inline-comment-marker ac:ref="UUID-HERE">Highlighted text</ac:inline-comment-marker>
+```
+
+When a comment is created, Confluence inserts a marker into the page body. The `markerRef` in the comment properties matches the `ac:ref` in the page HTML. You can map markers to their context by parsing the surrounding HTML (e.g., which table row or section the marker is in).
+
+### Creating Comments
+
+#### Inline Comments (v2 API)
+
+```python
+payload = {
+    "pageId": "PAGE_ID",
+    "body": {
+        "representation": "storage",
+        "value": "<p>Comment text here</p>"
+    },
+    "inlineCommentProperties": {
+        "textSelection": "Text to anchor to",      # exact text on the page
+        "textSelectionMatchCount": 1,               # total occurrences on page
+        "textSelectionMatchIndex": 0                 # which occurrence (0-indexed)
+    }
+}
+
+result = client._request('POST', '/wiki/api/v2/inline-comments', json_data=payload)
+# Returns comment with id, markerRef, webui link, etc.
+```
+
+**Important**: The endpoint is `/wiki/api/v2/inline-comments` (NOT `/wiki/api/v2/pages/PAGE_ID/inline-comments` which only supports GET).
+
+The three `inlineCommentProperties` fields are all required:
+- `textSelection`: The exact text string on the page to highlight
+- `textSelectionMatchCount`: How many times this text appears on the page
+- `textSelectionMatchIndex`: Which occurrence to attach to (0-based)
+
+#### Footer Comments (v1 API)
+
+```python
+payload = {
+    "type": "comment",
+    "container": {
+        "id": "PAGE_ID",
+        "type": "page",
+        "status": "current"
+    },
+    "body": {
+        "storage": {
+            "value": "<p>Footer comment text</p>",
+            "representation": "storage"
+        }
+    }
+}
+
+result = client._request('POST', '/wiki/rest/api/content', json_data=payload)
+```
+
+#### Inline Comment Body Format
+
+Comments support Confluence storage format HTML including JIRA smart links:
+
+```html
+<p>Filed MMR AI for this:
+  <ac:structured-macro ac:name="jira">
+    <ac:parameter ac:name="key">PROJ-123</ac:parameter>
+  </ac:structured-macro>
+</p>
+```
+
+### Deleting Comments
+
+```python
+# v2 API
+client._request('DELETE', f'/wiki/api/v2/inline-comments/{comment_id}')
+
+# v1 API (works for both inline and footer)
+client._request('DELETE', f'/wiki/rest/api/content/{comment_id}')
+```
+
+## Resolving Short Links
+
+Confluence short links (e.g., `https://company.atlassian.net/wiki/x/FIOXy`) can be resolved by following the HTTP redirect:
+
+```python
+import urllib.request, base64
+
+auth = base64.b64encode(f'{email}:{api_token}'.encode()).decode()
+url = f'{base_url}/wiki/x/SHORT_ID'
+req = urllib.request.Request(url, headers={'Authorization': f'Basic {auth}'})
+resp = urllib.request.urlopen(req)
+# resp.url contains the resolved full URL with page ID
+# e.g., https://company.atlassian.net/wiki/spaces/SPACE/pages/123456/Page+Title
+```
+
+The existing `get_page_from_link()` and `get_content_from_link()` methods handle this, but the built-in short link resolver may fail for some link formats. The redirect-follow approach above is more reliable.
+
 ## API Reference
 
-The Confluence client uses Atlassian's REST API v1:
-- Base URL: `{base_url}/wiki/rest/api/content`
+The Confluence client uses two Atlassian REST APIs:
+- **v1 API**: `{base_url}/wiki/rest/api/content` - Pages, footer comments, content operations
+- **v2 API**: `{base_url}/wiki/api/v2/` - Inline comments, newer endpoints
 - Authentication: Same as JIRA (Basic Auth with API token)
-- Documentation: https://developer.atlassian.com/cloud/confluence/rest/
+- v1 docs: https://developer.atlassian.com/cloud/confluence/rest/v1/
+- v2 docs: https://developer.atlassian.com/cloud/confluence/rest/v2/
 
 ## Limitations
 
@@ -659,6 +795,7 @@ The Confluence client uses Atlassian's REST API v1:
 - **Version conflicts**: Rare with auto-retry, but possible under high concurrency
 - **Rate limiting**: Atlassian may rate-limit API calls
 - **Content size**: Very large pages may be slow to transfer
+- **Inline comment creation**: Requires v2 API (`/wiki/api/v2/inline-comments`), v1 API does not support creating inline comments (needs `serializedHighlights` field which is undocumented)
 
 ## Troubleshooting
 
