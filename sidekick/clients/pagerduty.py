@@ -248,6 +248,96 @@ class PagerDutyClient:
             "/incidents", "incidents", params=params, max_results=max_results
         )
 
+    def list_incidents_analytics(
+        self,
+        since: str,
+        until: Optional[str] = None,
+        service_ids: Optional[List[str]] = None,
+        team_ids: Optional[List[str]] = None,
+        urgencies: Optional[List[str]] = None,
+        max_results: Optional[int] = None
+    ) -> list:
+        """List incidents using the Analytics API for better performance.
+
+        Uses POST /analytics/raw/incidents which supports limit=1000
+        (vs 100 for the regular incidents API), reducing API calls by ~80%
+        for large result sets. Also returns pre-computed fields like
+        seconds_to_resolve and auto_resolved.
+
+        Args:
+            since: Start date ("2026-01", "2026-01-15", or ISO 8601)
+            until: End date (same formats). If None with month shorthand,
+                   defaults to end of that month.
+            service_ids: Filter by service IDs
+            team_ids: Filter by team IDs
+            urgencies: Filter by urgency (high, low)
+            max_results: Cap on total incidents to return
+
+        Returns:
+            List of analytics incident dicts. Each dict contains:
+            id, incident_number, description, status, urgency, created_at,
+            resolved_at, seconds_to_resolve, auto_resolved, service_id,
+            service_name, team_id, team_name, escalation_policy_id, and more.
+        """
+        if until is None:
+            if self._is_month_shorthand(since):
+                parts = since.split("-")
+                year, month = int(parts[0]), int(parts[1])
+                since_iso = f"{since}-01T00:00:00Z"
+                until_iso = self._month_end(year, month)
+            else:
+                raise ValueError(
+                    "'until' is required unless 'since' is month shorthand"
+                )
+        else:
+            since_iso = self._parse_date(since)
+            if self._is_month_shorthand(until):
+                parts = until.split("-")
+                year, month = int(parts[0]), int(parts[1])
+                until_iso = self._month_end(year, month)
+            else:
+                until_iso = self._parse_date(until)
+
+        filters = {
+            "created_at_start": since_iso,
+            "created_at_end": until_iso,
+        }
+        if service_ids:
+            filters["service_ids"] = service_ids
+        if team_ids:
+            filters["team_ids"] = team_ids
+        if urgencies:
+            filters["urgency"] = urgencies
+
+        page_limit = min(max_results, 1000) if max_results else 1000
+        all_results = []
+        starting_after = None
+
+        while True:
+            body = {"filters": filters, "limit": page_limit}
+            if starting_after:
+                body["starting_after"] = starting_after
+
+            response = self._request(
+                "POST", "/analytics/raw/incidents", json_data=body
+            )
+            items = response.get("data", [])
+            all_results.extend(items)
+
+            if max_results and len(all_results) >= max_results:
+                return all_results[:max_results]
+
+            if not response.get("more", False):
+                break
+
+            # Cursor-based pagination: use the last item's ID
+            if items:
+                starting_after = items[-1].get("id")
+            else:
+                break
+
+        return all_results
+
     def get_incident(self, incident_id: str) -> dict:
         """Get a single incident by ID.
 
@@ -515,6 +605,31 @@ def _print_alert_details(alert: dict) -> None:
                 print(f"  Link: {ctx.get('href', '')} - {ctx.get('text', '')}")
 
 
+def _format_analytics_incident(record: dict) -> str:
+    """Format analytics incident as one-liner.
+
+    Format: #NUMBER: description [status] (urgency) {service} created_date  resolved_in
+    """
+    number = record.get("incident_number", "?")
+    desc = record.get("description", "No description")
+    status = record.get("status", "unknown")
+    urgency = record.get("urgency", "?")
+    service = record.get("service_name", "Unknown")
+    created = record.get("created_at", "")[:16].replace("T", " ")
+    resolve_secs = record.get("seconds_to_resolve")
+    if resolve_secs is not None:
+        if resolve_secs >= 3600:
+            resolve_str = f" [{resolve_secs / 3600:.1f}h]"
+        else:
+            resolve_str = f" [{resolve_secs / 60:.0f}m]"
+    else:
+        resolve_str = ""
+    return (
+        f"#{number}: {desc} [{status}] ({urgency}) "
+        f"{{{service}}} {created}{resolve_str}"
+    )
+
+
 def _format_service(service: dict) -> str:
     """Format service as one-liner."""
     sid = service.get("id", "?")
@@ -641,6 +756,7 @@ def main():
         print("\nCommands:")
         print("  list-services [query]")
         print("  list-incidents <since> [until] [--service ID] [--team ID]")
+        print("  list-incidents-analytics <since> [until] [--service ID] [--team ID]")
         print("  get-incident <incident-id>")
         print("  list-alerts <incident-id>")
         print("  incident-summary <since> [until] [--service ID] [--team ID]")
@@ -676,6 +792,18 @@ def main():
             print(f"Found {len(incidents)} incidents:")
             for inc in incidents:
                 print(_format_incident(inc))
+
+        elif command == "list-incidents-analytics":
+            since, until, service_ids, team_ids = _parse_incident_args(
+                sys.argv[2:]
+            )
+            incidents = client.list_incidents_analytics(
+                since=since, until=until,
+                service_ids=service_ids, team_ids=team_ids
+            )
+            print(f"Found {len(incidents)} incidents:")
+            for inc in incidents:
+                print(_format_analytics_incident(inc))
 
         elif command == "get-incident":
             if len(sys.argv) < 3:
