@@ -82,7 +82,7 @@ Read the calendar output. Process events as follows:
 - Number of attendees (distinguish 1:1 vs group meetings)
 - Description links (include links to agenda docs if present)
 
-**Tomorrow's preview**: Show a brief list of tomorrow's meetings (time + title only) so the user can see what's coming.
+**Tomorrow's preview**: Show a brief list of tomorrow's meetings (time range + title) so the user can see what's coming.
 
 ### Step 2: Fetch Inbox Emails
 
@@ -306,7 +306,7 @@ updated: YYYY-MM-DD HH:MM:SS
 | Time | Meeting |
 |------|---------|
 | 9:00-9:30 | Earnings Call |
-| 10:00-10:30 | SEV Review |
+| 10:00-10:25 | SEV Review |
 
 ---
 
@@ -428,7 +428,7 @@ Where `SAVED_REPORT_PATH` is the file path returned by the memory write command 
 - **Declined events are skipped.** If the user's response status is "declined", the event is omitted.
 - **All-day events are mostly ignored.** Only PTO/leave all-day events are included (as an "Out today" note). Holidays, multi-day reminders, and other all-day events are skipped.
 - **Timed events** are the focus -- actual meetings with start/end times.
-- **Tomorrow's preview** is included as a brief look-ahead (time + title only).
+- **Tomorrow's preview** is included as a brief look-ahead (time range + title).
 
 ### Paper Update Depth
 - **Never just say "N edits by Person"** -- that's what the email already says and adds no value.
