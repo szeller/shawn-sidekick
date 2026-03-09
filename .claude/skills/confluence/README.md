@@ -765,7 +765,7 @@ client._request('DELETE', f'/wiki/rest/api/content/{comment_id}')
 
 ## Resolving Short Links
 
-Confluence short links (e.g., `https://company.atlassian.net/wiki/x/FIOXy`) can be resolved by following the HTTP redirect:
+Confluence short links (e.g., `https://company.atlassian.net/wiki/x/AbCdEf`) can be resolved by following the HTTP redirect:
 
 ```python
 import urllib.request, base64
