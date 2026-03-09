@@ -302,19 +302,37 @@ def _format_event_oneline(event: dict) -> str:
     event_id = event.get("id", "")
     summary = event.get("summary", "(No title)")
 
-    # Get start time
+    # Get start/end time
     start = event.get("start", {})
+    end = event.get("end", {})
     if "dateTime" in start:
         start_str = start["dateTime"][:16].replace("T", " ")  # YYYY-MM-DD HH:MM
+        end_str = ""
+        if "dateTime" in end:
+            end_str = f" - {end['dateTime'][11:16]}"  # just HH:MM
+        time_str = f"{start_str}{end_str}"
     elif "date" in start:
-        start_str = start["date"] + " (all-day)"
+        time_str = start["date"] + " (all-day)"
     else:
-        start_str = "Unknown time"
+        time_str = "Unknown time"
 
     location = event.get("location", "")
     location_str = f" @ {location}" if location else ""
 
-    return f"{event_id}: {summary}\n  {start_str}{location_str}"
+    # Get user's response status (accepted/declined/tentative/needsAction)
+    status_str = ""
+    for attendee in event.get("attendees", []):
+        if attendee.get("self"):
+            response = attendee.get("responseStatus", "")
+            if response and response != "accepted":
+                status_str = f" [{response}]"
+            break
+
+    # Get attendee count
+    attendee_count = len(event.get("attendees", []))
+    attendee_str = f" ({attendee_count} attendees)" if attendee_count > 0 else ""
+
+    return f"{event_id}: {summary}\n  {time_str}{location_str}{status_str}{attendee_str}"
 
 
 def _format_event_full(event: dict) -> str:
