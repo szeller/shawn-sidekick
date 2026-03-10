@@ -941,6 +941,264 @@ class ConfluenceClient:
 
         return self.update_page(page_id, title, content, current_version)
 
+    def get_inline_comments(self, page_id: str, limit: int = 50) -> list:
+        """Get all inline comments on a page.
+
+        Args:
+            page_id: Confluence page ID
+            limit: Maximum comments to return
+
+        Returns:
+            List of comment dicts, each with:
+            - id: Comment ID
+            - body.storage.value: Comment HTML body
+            - resolutionStatus: "open" or "resolved"
+            - properties.inlineMarkerRef: UUID of the inline marker
+        """
+        result = self._request('GET', f'/wiki/api/v2/pages/{page_id}/inline-comments',
+            params={'body-format': 'storage', 'limit': limit})
+        return result.get('results', [])
+
+    def create_inline_comment(
+        self,
+        page_id: str,
+        body_html: str,
+        text_selection: str,
+        match_index: int,
+        match_count: int
+    ) -> dict:
+        """Create an inline comment anchored to specific text on a page.
+
+        IMPORTANT: match_count must equal the TOTAL number of occurrences of
+        text_selection on the entire page. Setting it to 1 causes 400 errors
+        for text inside styled spans. Use count_text_occurrences() to get
+        the correct count.
+
+        Args:
+            page_id: Confluence page ID
+            body_html: Comment body as HTML (e.g., "<p>Comment text</p>")
+            text_selection: The exact text to anchor to (e.g., "Comments / Issues")
+            match_index: 0-based index of which occurrence to anchor to
+            match_count: TOTAL number of occurrences of text_selection on page
+
+        Returns:
+            Created comment dict with 'id'
+
+        Raises:
+            ValueError: If text not found or index out of range
+        """
+        payload = {
+            "pageId": page_id,
+            "body": {
+                "representation": "storage",
+                "value": body_html
+            },
+            "inlineCommentProperties": {
+                "textSelection": text_selection,
+                "textSelectionMatchCount": match_count,
+                "textSelectionMatchIndex": match_index
+            }
+        }
+        return self._request('POST', '/wiki/api/v2/inline-comments', json_data=payload)
+
+    def delete_comment(self, comment_id: str) -> None:
+        """Delete an inline or footer comment.
+
+        Uses the v1 REST API because the v2 API does not support
+        deleting comments (returns 400 with GenericContentType error).
+
+        Args:
+            comment_id: Comment ID to delete
+
+        Raises:
+            ValueError: If comment not found
+        """
+        self._request("DELETE", f"/wiki/rest/api/content/{comment_id}")
+
+    def count_text_occurrences(self, page_id: str, text: str) -> int:
+        """Count occurrences of text in page storage content.
+
+        Useful for determining the correct match_count parameter
+        for create_inline_comment().
+
+        Args:
+            page_id: Confluence page ID
+            text: Text to count (supports regex)
+
+        Returns:
+            Number of occurrences
+        """
+        import re
+        content = self.get_page_content(page_id)
+        return len(re.findall(re.escape(text), content))
+
+    def attach_file(self, page_id: str, file_path: str, filename: Optional[str] = None) -> dict:
+        """Attach a file to a Confluence page.
+
+        Args:
+            page_id: Confluence page ID
+            file_path: Local path to the file to attach
+            filename: Optional filename override (defaults to basename of file_path)
+
+        Returns:
+            Attachment result dict with 'id' and 'title'
+
+        Raises:
+            ValueError: If file not found or upload fails
+        """
+        from pathlib import Path
+
+        path = Path(file_path)
+        if not path.exists():
+            raise ValueError(f"File not found: {file_path}")
+
+        if filename is None:
+            filename = path.name
+
+        # Multipart upload requires different content type
+        boundary = f"----FormBoundary{int(time.time() * 1000)}"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+
+        url = f"{self.base_url}/wiki/rest/api/content/{page_id}/child/attachment"
+        credentials = f"{self.email}:{self.api_token}"
+        encoded = base64.b64encode(credentials.encode()).decode()
+        headers = {
+            "Authorization": f"Basic {encoded}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "X-Atlassian-Token": "nocheck"
+        }
+
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                self.api_call_count += 1
+                result = json.loads(response.read().decode())
+                return result.get("results", [result])[0] if isinstance(result, dict) else result
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode() if e.fp else ""
+            raise ValueError(f"Attachment upload failed ({e.code}): {error_body}")
+
+    def create_footer_comment(
+        self,
+        page_id: str,
+        body_html: str
+    ) -> dict:
+        """Create a footer comment on a page.
+
+        Args:
+            page_id: Confluence page ID
+            body_html: Comment body as HTML storage format
+
+        Returns:
+            Created comment dict with 'id'
+        """
+        return self._request("POST", "/wiki/api/v2/footer-comments", json_data={
+            "pageId": page_id,
+            "body": {
+                "representation": "storage",
+                "value": body_html
+            }
+        })
+
+    def create_footer_comment_with_attachment(
+        self,
+        page_id: str,
+        body_html: str,
+        file_path: str,
+        filename: Optional[str] = None
+    ) -> dict:
+        """Create a footer comment with a file attachment.
+
+        Creates the comment first, then uploads the file as a child
+        attachment of the comment, then updates the comment body to
+        include a download link to the attachment.
+
+        In Confluence, comments are content objects that can have child
+        attachments just like pages. The attachment is uploaded via the
+        v1 API: POST /wiki/rest/api/content/{comment_id}/child/attachment
+
+        Args:
+            page_id: Confluence page ID
+            body_html: Comment body as HTML storage format. The attachment
+                link will be appended to this.
+            file_path: Local path to the file to attach
+            filename: Optional filename override (defaults to basename)
+
+        Returns:
+            dict with:
+            - comment: The created comment dict
+            - attachment: The uploaded attachment dict
+
+        Raises:
+            ValueError: If file not found or upload fails
+        """
+        from pathlib import Path
+
+        path = Path(file_path)
+        if not path.exists():
+            raise ValueError(f"File not found: {file_path}")
+        if filename is None:
+            filename = path.name
+
+        # Step 1: Create the footer comment
+        comment = self.create_footer_comment(page_id, body_html)
+        comment_id = comment["id"]
+
+        # Step 2: Upload attachment to the comment
+        boundary = f"----FormBoundary{int(time.time() * 1000)}"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+
+        url = f"{self.base_url}/wiki/rest/api/content/{comment_id}/child/attachment"
+        credentials = f"{self.email}:{self.api_token}"
+        encoded = base64.b64encode(credentials.encode()).decode()
+        headers = {
+            "Authorization": f"Basic {encoded}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "X-Atlassian-Token": "nocheck"
+        }
+
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                self.api_call_count += 1
+                result = json.loads(response.read().decode())
+                attachment = result.get("results", [result])[0] if isinstance(result, dict) else result
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode() if e.fp else ""
+            raise ValueError(f"Attachment upload to comment failed ({e.code}): {error_body}")
+
+        # Step 3: Update comment body to include attachment link
+        updated_body = (
+            body_html +
+            f'<p><ac:link><ri:attachment ri:filename="{filename}" '
+            f'ri:version-at-save="1" /></ac:link></p>'
+        )
+
+        comment_detail = self._request("GET", f"/wiki/rest/api/content/{comment_id}",
+            params={"expand": "version"})
+        version = comment_detail["version"]["number"]
+
+        self._request("PUT", f"/wiki/rest/api/content/{comment_id}", json_data={
+            "version": {"number": version + 1},
+            "type": "comment",
+            "body": {
+                "storage": {
+                    "value": updated_body,
+                    "representation": "storage"
+                }
+            }
+        })
+
+        return {"comment": comment, "attachment": attachment}
+
     def add_topic_to_oneonone(
         self,
         user_name: str,

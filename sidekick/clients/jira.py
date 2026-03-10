@@ -207,6 +207,50 @@ class JiraClient:
         json_data = {"fields": fields}
         self._request("PUT", endpoint, json_data=json_data)
 
+    def create_issue(
+        self,
+        project: str,
+        summary: str,
+        description: str,
+        issue_type: str = "Task",
+        priority: str = "Medium",
+        labels: Optional[list] = None,
+        components: Optional[list] = None
+    ) -> dict:
+        """Create a new JIRA issue.
+
+        Description is passed as markdown and automatically converted to ADF.
+
+        Args:
+            project: Project key (e.g., "RPLAT")
+            summary: Issue summary/title
+            description: Issue description in markdown format (## headings, - bullets, 1. lists)
+            issue_type: Issue type name (default: "Task")
+            priority: Priority name — use Highest, High, Medium, Low, Lowest (NOT P1/P2)
+            labels: Optional list of labels (e.g., ["MMR-AI"])
+            components: Optional list of component names (e.g., ["RPLAT"])
+
+        Returns:
+            dict with created issue data including 'key'
+
+        Raises:
+            ValueError: If creation fails (invalid project, priority, etc.)
+        """
+        fields = {
+            "project": {"key": project},
+            "summary": summary,
+            "issuetype": {"name": issue_type},
+            "priority": {"name": priority},
+            "description": _md_to_adf(description),
+        }
+        if labels:
+            fields["labels"] = labels
+        if components:
+            fields["components"] = [{"name": c} for c in components]
+
+        endpoint = f"/rest/api/{self.api_version}/issue"
+        return self._request("POST", endpoint, json_data={"fields": fields})
+
     def add_label(self, issue_key: str, label: str) -> None:
         """Add a label to an issue (preserving existing labels).
 
@@ -746,6 +790,103 @@ def _build_ancestry_labels(
         return ancestry
 
 
+def _md_to_adf(md_text: str) -> dict:
+    """Convert simple markdown to Atlassian Document Format (ADF).
+
+    Supports: ## headings, - unordered lists, 1. ordered lists, **bold**,
+    and bare URLs (auto-linked). Paragraphs separated by blank lines.
+
+    JIRA Cloud API v3 requires ADF for description fields. Passing raw
+    markdown inside a single paragraph node renders as literal text.
+
+    Args:
+        md_text: Markdown-formatted text
+
+    Returns:
+        ADF document dict ready for JIRA's description field
+    """
+    import re
+    lines = md_text.split("\n")
+    content = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        if not line.strip():
+            i += 1
+            continue
+
+        # ## Heading
+        if line.startswith("## "):
+            content.append({
+                "type": "heading",
+                "attrs": {"level": 2},
+                "content": [{"type": "text", "text": line[3:].strip()}]
+            })
+            i += 1
+            continue
+
+        # Ordered list (1. 2. 3.)
+        if re.match(r"^\d+\.\s", line):
+            items = []
+            while i < len(lines) and re.match(r"^\d+\.\s", lines[i]):
+                item_text = re.sub(r"^\d+\.\s+", "", lines[i])
+                items.append({
+                    "type": "listItem",
+                    "content": [{"type": "paragraph", "content": _inline_markup(item_text)}]
+                })
+                i += 1
+            content.append({"type": "orderedList", "content": items})
+            continue
+
+        # Unordered list (- item)
+        if line.startswith("- "):
+            items = []
+            while i < len(lines) and lines[i].startswith("- "):
+                items.append({
+                    "type": "listItem",
+                    "content": [{"type": "paragraph", "content": _inline_markup(lines[i][2:])}]
+                })
+                i += 1
+            content.append({"type": "bulletList", "content": items})
+            continue
+
+        # Regular paragraph
+        content.append({
+            "type": "paragraph",
+            "content": _inline_markup(line)
+        })
+        i += 1
+
+    return {"type": "doc", "version": 1, "content": content}
+
+
+def _inline_markup(text: str) -> list:
+    """Convert inline markdown (**bold**, URLs) to ADF inline nodes.
+
+    Args:
+        text: Text potentially containing **bold** and bare URLs
+
+    Returns:
+        List of ADF inline content nodes
+    """
+    import re
+    nodes = []
+    parts = re.split(r"(\*\*.*?\*\*)", text)
+    for part in parts:
+        if part.startswith("**") and part.endswith("**"):
+            nodes.append({"type": "text", "text": part[2:-2], "marks": [{"type": "strong"}]})
+        elif part:
+            url_parts = re.split(r"(https?://\S+)", part)
+            for up in url_parts:
+                if up.startswith("http://") or up.startswith("https://"):
+                    nodes.append({"type": "text", "text": up, "marks": [{"type": "link", "attrs": {"href": up}}]})
+                elif up:
+                    nodes.append({"type": "text", "text": up})
+    return nodes
+
+
 def main():
     """CLI entry point for JIRA client.
 
@@ -775,6 +916,7 @@ def main():
         print("  add-label <issue-key> <label>")
         print("  remove-label <issue-key> <label>")
         print("  label-roadmap <root-issue> [project] [--dry-run] [--limit N]")
+        print("  create-issue <project> <summary> <description> [--priority P] [--labels L1,L2] [--components C1,C2]")
         sys.exit(1)
 
     try:
@@ -901,6 +1043,35 @@ def main():
             print(f"\nSummary: Processed {stats['processed']} issues, " +
                   f"labeled {stats['labeled']}, skipped {stats['skipped']}, " +
                   f"{stats['errors']} errors")
+
+        elif command == "create-issue":
+            if len(sys.argv) < 5:
+                print("Usage: create-issue <project> <summary> <description> [--priority P] [--labels L1,L2] [--components C1,C2]")
+                sys.exit(1)
+            project = sys.argv[2]
+            summary = sys.argv[3]
+            description = sys.argv[4]
+
+            # Parse optional flags
+            priority = "Medium"
+            labels = None
+            components = None
+            i = 5
+            while i < len(sys.argv):
+                if sys.argv[i] == "--priority" and i + 1 < len(sys.argv):
+                    priority = sys.argv[i + 1]
+                    i += 2
+                elif sys.argv[i] == "--labels" and i + 1 < len(sys.argv):
+                    labels = sys.argv[i + 1].split(",")
+                    i += 2
+                elif sys.argv[i] == "--components" and i + 1 < len(sys.argv):
+                    components = sys.argv[i + 1].split(",")
+                    i += 2
+                else:
+                    i += 1
+
+            result = client.create_issue(project, summary, description, priority=priority, labels=labels, components=components)
+            print(f"Created {result['key']}: {summary}")
 
         else:
             print(f"Unknown command: {command}")
