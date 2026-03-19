@@ -31,12 +31,15 @@ These may be Confluence pages or Dropbox Paper docs
 
 ### Step 2: Fetch Recent Content
 
-For each document, fetch the content:
+For each document, fetch the content.
 
-Create output directory first:
-```bash
-mkdir -p memory/weekly_report
-```
+**For Slack channels**, use the `/slack` skill to read messages from the last 10 days:
+1. Calculate date 10 days ago: `date -v-10d '+%Y-%m-%d'`
+2. Use `slack_search_messages` with `after:YYYY-MM-DD in:#channel-name` query and pagination
+3. Format results as Markdown (see `/slack` skill for formatting example)
+4. Save to `memory/weekly_report/slack-channel-name.md`
+
+**For Confluence and Paper docs**, use the respective clients to fetch content.
 
 **For Confluence pages:**
 ```bash
