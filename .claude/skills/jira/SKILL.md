@@ -23,6 +23,11 @@ python -m sidekick.clients.jira query "JQL query" [max_results]
 python -m sidekick.clients.jira get-issue ISSUE-KEY
 ```
 
+### Get Comments
+```bash
+python -m sidekick.clients.jira get-comments ISSUE-KEY
+```
+
 ### Get Multiple Issues
 ```bash
 python -m sidekick.clients.jira get-issues-bulk ISSUE-1 ISSUE-2 ISSUE-3

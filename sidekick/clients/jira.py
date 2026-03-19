@@ -270,6 +270,60 @@ class JiraClient:
             updated_labels = current_labels + [label]
             self.update_issue(issue_key, {"labels": updated_labels})
 
+    def get_comments(self, issue_key: str) -> list:
+        """Get comments for an issue.
+
+        Args:
+            issue_key: Issue key like "PROJ-123"
+
+        Returns:
+            List of comment dicts with 'author', 'created', and 'body' keys.
+            Body is extracted as plain text from Atlassian Document Format.
+        """
+        endpoint = f"/rest/api/{self.api_version}/issue/{issue_key}/comment"
+        result = self._request("GET", endpoint)
+        comments = result.get("comments", [])
+        parsed = []
+        for cm in comments:
+            author_data = cm.get("author", {})
+            author = author_data.get("displayName", author_data.get("name", "Unknown"))
+            created = cm.get("created", "")
+            body_adf = cm.get("body", {})
+            body_text = self._extract_adf_text(body_adf)
+            parsed.append({"author": author, "created": created, "body": body_text})
+        return parsed
+
+    @staticmethod
+    def _extract_adf_text(node: dict) -> str:
+        """Extract plain text from Atlassian Document Format."""
+        parts = []
+
+        def _walk(n):
+            if isinstance(n, dict):
+                ntype = n.get("type", "")
+                if ntype == "text":
+                    parts.append(n.get("text", ""))
+                elif ntype == "inlineCard":
+                    parts.append(n.get("attrs", {}).get("url", ""))
+                elif ntype == "hardBreak":
+                    parts.append("\n")
+                elif ntype == "codeBlock":
+                    for child in n.get("content", []):
+                        if child.get("type") == "text":
+                            parts.append("\n```\n" + child.get("text", "") + "\n```\n")
+                    return  # don't recurse into codeBlock children again
+                for child in n.get("content", []):
+                    _walk(child)
+                # Add newline after block-level elements
+                if ntype in ("paragraph", "blockquote", "listItem", "taskItem"):
+                    parts.append("\n")
+            elif isinstance(n, list):
+                for item in n:
+                    _walk(item)
+
+        _walk(node)
+        return "".join(parts).strip()
+
     def remove_label(self, issue_key: str, label: str) -> None:
         """Remove a label from an issue (preserving other labels).
 
@@ -907,6 +961,7 @@ def main():
         print("Usage: python3 sidekick/clients/jira.py <command> [args...]")
         print("\nCommands:")
         print("  get-issue <issue-key>")
+        print("  get-comments <issue-key>")
         print("  get-issues-bulk <key1> <key2> ...")
         print("  query <jql> [max-results]")
         print("  query-by-parent <parent-key> [max-results]")
@@ -1006,6 +1061,18 @@ def main():
             label = sys.argv[3]
             client.remove_label(issue_key, label)
             print(f"Removed label '{label}' from {issue_key}")
+
+        elif command == "get-comments":
+            issue_key = sys.argv[2]
+            comments = client.get_comments(issue_key)
+            if not comments:
+                print(f"{issue_key}: No comments")
+            else:
+                print(f"{issue_key}: {len(comments)} comments")
+                for i, cm in enumerate(comments, 1):
+                    created = cm['created'][:10] if cm['created'] else ''
+                    print(f"\n--- Comment {i} [{cm['author']}] {created} ---")
+                    print(cm['body'])
 
         elif command == "label-roadmap":
             root_issue = sys.argv[2]
